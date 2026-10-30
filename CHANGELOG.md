@@ -7,6 +7,12 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `scar-mine.sh` and `/scar mine`: mine a repo's git history for "rapid regret" commit pairs (same author, fix shortly after, same files/lines) and draft scars from them.
+- Project-scoped gate rules (`bash@<dir>`, `tool@<dir>`) to relax gates where a command is routine; only honoured from your own local conf.
+
+## [0.1.0] - 2026-10-30
+
+### Added
 - `install.sh`: idempotent installer with `--dry-run`, `--uninstall`, timestamped backups and exact-restore uninstall.
 - Task state ledger: `SessionStart` hook re-injects `<project>/.state/*.md` on startup, resume and compaction.
 - Human gates: `PreToolUse` hook with `allow`/`ask`/`deny` rules in `guard-gates.conf`, plus a never-overwritten `guard-gates.local.conf`.

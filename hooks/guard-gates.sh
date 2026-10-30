@@ -7,9 +7,12 @@
 #   guard-gates.d/*.conf    (optional modules, e.g. fernrohr.conf)
 #   guard-gates.conf        (kit defaults)
 # First matching rule wins. Line format:
-#   <allow|ask|deny> :: <bash|tool> :: <extended regex> :: <reason>
+#   <allow|ask|deny> :: <bash|tool>[@<project-dir-glob>] :: <extended regex> :: <reason>
 # In bash-scope patterns, {B} expands to a command-boundary class so
 # "cd x && git push" matches but "grep 'git push'" does not.
+# A scope like bash@~/code/myrepo limits the rule to sessions whose project
+# dir is that path or below it (glob, ~ expanded). Project-scoped rules are
+# only meaningful in your local conf; repos can't ship them.
 #
 # Fails open on parse errors so a broken hook can't wedge every tool call.
 set -euo pipefail
@@ -26,6 +29,16 @@ else
   scope=tool
   subject=$tool
 fi
+
+project=${CLAUDE_PROJECT_DIR:-}
+[ -n "$project" ] || project=$(jq -r '.cwd // empty' <<<"$input" 2>/dev/null || true)
+
+in_project() { # $1 = glob; true if $project is the glob's dir or below it
+  local glob=${1/#\~/$HOME}
+  [ -n "$project" ] || return 1
+  # shellcheck disable=SC2053  # unquoted RHS is intentional: glob match
+  [[ $project == $glob || $project == $glob/* ]]
+}
 
 conf_dir=$(cd "$(dirname "$0")" && pwd)
 boundary='(^|[;&|[:space:]`(])'
@@ -51,7 +64,11 @@ for conf in "${confs[@]}"; do
       echo "guard-gates: skipping malformed rule in $conf: $line" >&2
       continue ;;
     esac
-    [ "$rule_scope" = "$scope" ] || continue
+    case "$rule_scope" in
+      "$scope") ;;
+      "$scope@"*) in_project "${rule_scope#*@}" || continue ;;
+      *) continue ;;
+    esac
     pattern=${pattern//\{B\}/$boundary}
     if grep -Eq -- "$pattern" <<<"$subject"; then
       decide "$decision" "$reason"

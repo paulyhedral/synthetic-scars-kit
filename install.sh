@@ -4,7 +4,7 @@
 # Installs into the Claude config dir (default: $CLAUDE_CONFIG_DIR or ~/.claude):
 #   hooks/state-bootloader.sh   SessionStart: re-inject <project>/.state/*.md
 #   hooks/guard-gates.sh+.conf  PreToolUse: ask/deny gates for risky commands
-#   skills/scar/SKILL.md        /scar: turn corrections into 4-vector scars
+#   skills/scar/                /scar skill + scar-mine.sh (git-history miner)
 #   CLAUDE.md                   marked block with ledger + scar conventions
 #   settings.json               hook registrations (merged, existing hooks kept)
 # and adds `.state/` to your global gitignore.
@@ -273,6 +273,7 @@ install_kit() {
     say "  = keeping existing guard-gates.local.conf"
   fi
   run install -m 0644 "$KIT_DIR/skills/scar/SKILL.md" "$SKILL_DIR/SKILL.md"
+  run install -m 0755 "$KIT_DIR/skills/scar/scar-mine.sh" "$SKILL_DIR/scar-mine.sh"
   say "Modules:"
   local m
   for m in $MODULES; do

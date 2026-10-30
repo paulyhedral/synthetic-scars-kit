@@ -46,7 +46,12 @@ check "local conf seeded" yes "$([ -f "$CD/hooks/guard-gates.local.conf" ] && ec
 G="$CD/hooks/guard-gates.sh"
 gate() { # $1=tool $2=command -> allow|ask|deny
   local out
-  out=$(jq -n --arg t "$1" --arg c "$2" '{tool_name:$t,tool_input:{command:$c}}' | "$BASH_BIN" "$G" 2>/dev/null)
+  out=$(jq -n --arg t "$1" --arg c "$2" '{tool_name:$t,tool_input:{command:$c}}' | env -u CLAUDE_PROJECT_DIR "$BASH_BIN" "$G" 2>/dev/null)
+  if [ -z "$out" ]; then echo allow; else jq -r '.hookSpecificOutput.permissionDecision' <<<"$out"; fi
+}
+gate_at() { # $1=project dir (passed as hook input .cwd) $2=tool $3=command
+  local out
+  out=$(jq -n --arg d "$1" --arg t "$2" --arg c "$3" '{cwd:$d,tool_name:$t,tool_input:{command:$c}}' | env -u CLAUDE_PROJECT_DIR HOME="$SANDBOX/home" "$BASH_BIN" "$G" 2>/dev/null)
   if [ -z "$out" ]; then echo allow; else jq -r '.hookSpecificOutput.permissionDecision' <<<"$out"; fi
 }
 while IFS='|' read -r want tool cmd; do
@@ -85,6 +90,24 @@ check "local deny beats default ask" deny "$(gate Bash 'terraform apply')"
 check "local allow whitelists" allow "$(gate Bash 'git push origin scratch')"
 check "tool-scope rule" ask "$(gate mcp__x__delete_thing '')"
 out=$(echo "not json" | "$BASH_BIN" "$G" 2>/dev/null); check "malformed input fails open (no output)" "" "$out"
+
+# --- project-scoped rules (bash@<dir>) ---
+printf '%s\n' \
+  "allow :: bash@$SANDBOX/infra :: {B}git[[:space:]]+push([[:space:]]|\$) :: pushes are routine here" \
+  'allow :: bash@~/agents :: {B}kubectl[[:space:]] :: kubectl is routine here' \
+  'allow :: tool@~/agents :: ^mcp__x__delete_.* :: fine here' \
+  'ask :: tool :: ^mcp__x__delete_.* :: mutating MCP' >"$CD/hooks/guard-gates.local.conf"
+check "scoped allow in project root" allow "$(gate_at "$SANDBOX/infra" Bash 'git push origin x')"
+check "scoped allow in project subdir" allow "$(gate_at "$SANDBOX/infra/modules/a" Bash 'git push')"
+check "scoped allow not for sibling prefix" ask "$(gate_at "$SANDBOX/infra-other" Bash 'git push')"
+check "scoped allow not elsewhere" ask "$(gate_at "$SANDBOX/elsewhere" Bash 'git push')"
+check "scoped allow with ~ expansion" allow "$(gate_at "$SANDBOX/home/agents" Bash 'kubectl delete pod x')"
+check "scoped rule leaves other gates alone" ask "$(gate_at "$SANDBOX/infra" Bash 'kubectl delete pod x')"
+check "scoped tool rule" allow "$(gate_at "$SANDBOX/home/agents" mcp__x__delete_thing '')"
+check "unscoped tool rule elsewhere" ask "$(gate_at "$SANDBOX/infra" mcp__x__delete_thing '')"
+check "no project dir: scoped rule skipped" ask "$(gate Bash 'git push')"
+out=$(jq -n '{cwd:"/nowhere",tool_name:"Bash",tool_input:{command:"git push"}}' | CLAUDE_PROJECT_DIR="$SANDBOX/infra" "$BASH_BIN" "$G" 2>/dev/null)
+check "CLAUDE_PROJECT_DIR wins over cwd (allow = no output)" "" "$out"
 
 # --- bootloader ---
 B="$CD/hooks/state-bootloader.sh"
@@ -132,6 +155,45 @@ check "openspec plugin removed" no "$([ -f "$CD/hooks/state-bootloader.d/openspe
 # --- bad module name ---
 rc=0; inst --with nosuch 2>/dev/null || rc=$?
 check "unknown module rejected" 2 "$rc"
+
+# --- scar-mine ---
+M="$CD/skills/scar/scar-mine.sh"
+check "scar-mine installed with skill" yes "$([ -x "$M" ] && echo yes)"
+R="$SANDBOX/minerepo"; mkdir -p "$R"
+g() { GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -C "$R" -c user.name=x -c user.email=x@x -c commit.gpgsign=false "$@"; }
+t0=1767225600   # 2026-01-01T00:00:00Z
+at() { # $1=offset minutes $2=author email $3=subject  (commits whatever is staged)
+  local ts=$((t0 + $1 * 60))
+  GIT_AUTHOR_DATE="@$ts +0000" GIT_COMMITTER_DATE="@$ts +0000" GIT_AUTHOR_EMAIL="$2" GIT_AUTHOR_NAME="${2%@*}" \
+    g commit -q -m "$3"
+}
+g init -q
+printf 'a1\na2\nport: 8080\na4\na5\n' >"$R/svc.yaml"; g add svc.yaml; at 0 alice@x.io "feat: add svc"
+printf 'z1\n' >"$R/other.yaml"; g add other.yaml; at 5 bob@x.io "feat: bob unrelated"
+sed -i.bak 's/8080/80/' "$R/svc.yaml"; rm "$R/svc.yaml.bak"; g add svc.yaml; at 12 alice@x.io "fix: svc port is 80, not 8080"
+printf 'b1\n' >"$R/b.yaml"; g add b.yaml; at 120 alice@x.io "feat: add b"
+printf 'c1\n' >"$R/c.yaml"; g add c.yaml; at 130 alice@x.io "feat: add c"
+printf 'd1\nd2\n' >"$R/deps.txt"; g add deps.txt; at 200 'dependabot[bot]@users.noreply.github.com' "chore: bump d"
+printf 'd1\nd3\n' >"$R/deps.txt"; g add deps.txt; at 205 'dependabot[bot]@users.noreply.github.com' "fix: bump d again"
+printf 'a1 x\na2\nport: 80\na4\na5\n' >"$R/svc.yaml"; g add svc.yaml; at 300 alice@x.io "feat: tweak svc"
+printf 'a1 y\na2\nport: 80\na4\na5\n' >"$R/svc.yaml"; g add svc.yaml; at 390 alice@x.io "fix typo in svc"
+mine() { "$BASH_BIN" "$M" -C "$R" --since "2025-01-01" "$@"; }
+out=$(mine)
+check "miner header" "score" "$(head -1 <<<"$out" | cut -f1)"
+check "miner finds port regret pair" 1 "$(grep -c 'svc port is 80' <<<"$out")"
+check "pair has fix-keyword + line overlap + <=15min score" 7 "$(grep 'svc port is 80' <<<"$out" | cut -f1)"
+check "pair trap subject" "feat: add svc" "$(grep 'svc port is 80' <<<"$out" | cut -f7)"
+check "pair minutes" 12 "$(grep 'svc port is 80' <<<"$out" | cut -f2)"
+check "no pair without shared files" 0 "$(grep -c 'feat: add c' <<<"$out" || true)"
+check "bots excluded" 0 "$(grep -c 'bump d' <<<"$out" || true)"
+check "outside 60-min window excluded" 0 "$(grep -c 'fix typo in svc' <<<"$out" || true)"
+check "wider window includes it" 1 "$(mine --window 120 | grep -c 'fix typo in svc')"
+check "single-commit author yields no pair" 0 "$(grep -c 'bob' <<<"$out" || true)"
+check "min-score filters" 0 "$(mine --min-score 8 | tail -n +2 | wc -l | tr -d ' ')"
+check "limit respected" 1 "$(mine --window 120 --limit 1 | tail -n +2 | wc -l | tr -d ' ')"
+check "pathspec filter" 0 "$(mine -- other.yaml | tail -n +2 | wc -l | tr -d ' ')"
+rc=0; "$BASH_BIN" "$M" -C "$SANDBOX/home" >/dev/null 2>&1 || rc=$?; check "non-repo rejected" 1 "$rc"
+rc=0; "$BASH_BIN" "$M" -C "$R" --window abc >/dev/null 2>&1 || rc=$?; check "bad number rejected" 2 "$rc"
 
 # --- uninstall (with both modules on) restores original config ---
 inst --with fernrohr,openspec

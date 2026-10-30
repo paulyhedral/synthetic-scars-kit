@@ -1,10 +1,12 @@
 # guard-gates.local.conf: your own gate rules. Checked BEFORE the kit
 # defaults in guard-gates.conf, and never overwritten by install.sh.
 #
-# Format:  <allow|ask|deny> :: <bash|tool> :: <extended regex> :: <reason>
+# Format:  <allow|ask|deny> :: <bash|tool>[@<project-dir>] :: <extended regex> :: <reason>
 # {B} = command boundary. `tool` scope matches the tool name (e.g. MCP tools).
+# @<project-dir> limits a rule to sessions in that directory or below (~ and globs ok).
 #
 # Examples (uncomment to use):
 # deny  :: bash :: {B}terraform[[:space:]]+(apply|destroy)([[:space:]]|$) :: Applies run in CI only, never locally.
 # allow :: bash :: {B}git[[:space:]]+push([[:space:]]|$) :: (whitelist plain pushes in this setup)
 # ask   :: tool :: ^mcp__myserver__(delete|update)_.* :: Mutating MCP call. Confirm first.
+# allow :: bash@~/code/infra :: {B}git[[:space:]]+push([[:space:]]|$) :: Pushing is routine in this repo.
