@@ -16,7 +16,8 @@ check() { # $1=description $2=expected $3=actual
     fail=$((fail + 1)); printf 'FAIL: %s\n  expected: %s\n  actual:   %s\n' "$1" "$2" "$3"
   fi
 }
-inst() { "$BASH_BIN" "$KIT_DIR/install.sh" --claude-dir "$CD" --gitignore-file "$IGN" "$@" >/dev/null; }
+CJ="$SANDBOX/claude.json"   # stand-in for ~/.claude.json (absent unless a test writes it)
+inst() { "$BASH_BIN" "$KIT_DIR/install.sh" --claude-dir "$CD" --claude-json "$CJ" --gitignore-file "$IGN" "$@" </dev/null >/dev/null; }
 
 # --- pre-existing user config that must survive ---
 mkdir -p "$CD"
@@ -29,7 +30,7 @@ cp "$CD/settings.json" "$SANDBOX/settings.orig"
 cp "$CD/CLAUDE.md" "$SANDBOX/claude.orig"
 
 # --- install twice: must be idempotent ---
-inst; inst
+inst --without fernrohr,openspec; inst --without fernrohr,openspec
 s="$CD/settings.json"
 check "SessionStart entries (existing + ours)" 2 "$(jq '.hooks.SessionStart | length' "$s")"
 check "PreToolUse entries" 1 "$(jq '.hooks.PreToolUse | length' "$s")"
@@ -45,7 +46,7 @@ check "local conf seeded" yes "$([ -f "$CD/hooks/guard-gates.local.conf" ] && ec
 G="$CD/hooks/guard-gates.sh"
 gate() { # $1=tool $2=command -> allow|ask|deny
   local out
-  out=$(jq -n --arg t "$1" --arg c "$2" '{tool_name:$t,tool_input:{command:$c}}' | "$BASH_BIN" "$G")
+  out=$(jq -n --arg t "$1" --arg c "$2" '{tool_name:$t,tool_input:{command:$c}}' | "$BASH_BIN" "$G" 2>/dev/null)
   if [ -z "$out" ]; then echo allow; else jq -r '.hookSpecificOutput.permissionDecision' <<<"$out"; fi
 }
 while IFS='|' read -r want tool cmd; do
@@ -94,7 +95,46 @@ check "bootloader prints ledger" 1 "$(grep -c 'Next: run critic' <<<"$out")"
 check "bootloader reports source" 1 "$(grep -c 'session source: compact' <<<"$out")"
 check "bootloader silent without .state" "" "$(echo '{}' | CLAUDE_PROJECT_DIR="$SANDBOX" "$BASH_BIN" "$B")"
 
-# --- uninstall restores original config ---
+# --- module: fernrohr (detection, persistence, removal) ---
+printf '{"projects":{"/x":{"mcpServers":{"fernrohr":{"command":"fernrohr-mcp"}}}}}' >"$CJ"
+inst --without openspec
+FC="$CD/hooks/guard-gates.d/fernrohr.conf"
+check "fernrohr detected via project MCP entry" yes "$([ -f "$FC" ] && echo yes)"
+check "gate: fernrohr delete_pods" ask "$(gate mcp__fernrohr__delete_pods '')"
+check "gate: fernrohr scale_workload" ask "$(gate mcp__fernrohr__scale_workload '')"
+check "gate: fernrohr list_resources" allow "$(gate mcp__fernrohr__list_resources '')"
+rm -f "$CJ"; inst --without openspec
+check "fernrohr kept when already installed" yes "$([ -f "$FC" ] && echo yes)"
+inst --without fernrohr,openspec
+check "fernrohr removed by --without" no "$([ -f "$FC" ] && echo yes || echo no)"
+check "empty guard-gates.d removed" no "$([ -d "$CD/hooks/guard-gates.d" ] && echo yes || echo no)"
+check "fernrohr gate gone after removal" allow "$(gate mcp__fernrohr__delete_pods '')"
+
+# --- module: openspec ---
+inst --with openspec --without fernrohr
+check "openspec plugin installed" yes "$([ -f "$CD/hooks/state-bootloader.d/openspec.sh" ] && echo yes)"
+check "openspec CLAUDE.md section added" 1 "$(grep -c '^## OpenSpec' "$CD/CLAUDE.md")"
+O="$SANDBOX/osproj"
+mkdir -p "$O/openspec/changes/add-thing" "$O/openspec/changes/archive/2026-01-01-old"
+printf -- '- [x] 1.1 done\n- [ ] 1.2 open task\n' >"$O/openspec/changes/add-thing/tasks.md"
+printf -- '- [ ] archived\n' >"$O/openspec/changes/archive/2026-01-01-old/tasks.md"
+out=$(echo '{"source":"resume"}' | CLAUDE_PROJECT_DIR="$O" "$BASH_BIN" "$B")
+check "bootloader shows active change" 1 "$(grep -c 'add-thing/tasks.md' <<<"$out")"
+check "bootloader shows open task" 1 "$(grep -c '1.2 open task' <<<"$out")"
+check "bootloader skips archived change" 0 "$(grep -c 'archived' <<<"$out" || true)"
+check "bootloader silent without .state or openspec" "" "$(echo '{}' | CLAUDE_PROJECT_DIR="$SANDBOX" "$BASH_BIN" "$B")"
+inst --with openspec --without fernrohr
+check "openspec section still once after reinstall" 1 "$(grep -c '^## OpenSpec' "$CD/CLAUDE.md")"
+inst --without openspec,fernrohr
+check "openspec section removed by --without" 0 "$(grep -c '^## OpenSpec' "$CD/CLAUDE.md" || true)"
+check "openspec plugin removed" no "$([ -f "$CD/hooks/state-bootloader.d/openspec.sh" ] && echo yes || echo no)"
+
+# --- bad module name ---
+rc=0; inst --with nosuch 2>/dev/null || rc=$?
+check "unknown module rejected" 2 "$rc"
+
+# --- uninstall (with both modules on) restores original config ---
+inst --with fernrohr,openspec
 inst --uninstall
 check "settings restored" "$(jq -S . "$SANDBOX/settings.orig")" "$(jq -S . "$CD/settings.json")"
 check "CLAUDE.md restored" "$(cat "$SANDBOX/claude.orig")" "$(cat "$CD/CLAUDE.md")"

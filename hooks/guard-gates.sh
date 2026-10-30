@@ -2,8 +2,9 @@
 # PreToolUse hook: harness-enforced human gates for irreversible actions,
 # so they don't depend on the model following prompt rules.
 #
-# Rules live next to this script:
-#   guard-gates.local.conf  (yours, never overwritten by install.sh, checked first)
+# Rules live next to this script, checked in this order:
+#   guard-gates.local.conf  (yours, never overwritten by install.sh)
+#   guard-gates.d/*.conf    (optional modules, e.g. fernrohr.conf)
 #   guard-gates.conf        (kit defaults)
 # First matching rule wins. Line format:
 #   <allow|ask|deny> :: <bash|tool> :: <extended regex> :: <reason>
@@ -37,7 +38,9 @@ decide() { # $1=allow|ask|deny  $2=reason
   exit 0
 }
 
-for conf in "$conf_dir/guard-gates.local.conf" "$conf_dir/guard-gates.conf"; do
+shopt -s nullglob
+confs=("$conf_dir/guard-gates.local.conf" "$conf_dir"/guard-gates.d/*.conf "$conf_dir/guard-gates.conf")
+for conf in "${confs[@]}"; do
   [ -f "$conf" ] || continue
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in '' | '#'*) continue ;; esac

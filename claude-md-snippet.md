@@ -1,5 +1,5 @@
 ## Task state ledger (`.state/`)
-Skip for ad-hoc Q&A. For multi-step tasks, keep state on disk in `<project-root>/.state/` (globally git-ignored); if the repo uses a spec tool with its own task list (e.g. OpenSpec `tasks.md`), that is the ledger instead.
+Skip for ad-hoc Q&A. For multi-step tasks, keep state on disk in `<project-root>/.state/` (globally git-ignored). If the repo already has its own task ledger (a spec tool's task list, say), use that instead.
 - `00_governance.md` (write once): task scope and which steps need my approval.
 - `10_ticket.md` (write once): ticket/issue link, branch, acceptance criteria.
 - `20_plan_approved.md` (write once, after I approve the plan): approved files and invariants.

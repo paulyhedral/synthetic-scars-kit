@@ -6,7 +6,7 @@ It installs three things:
 
 | Piece | What it does | Mechanism |
 |---|---|---|
-| **Task state ledger** | Multi-step tasks keep their state in `<project>/.state/*.md`, which gets re-injected into context on startup, resume and **after compaction**, so progress doesn't depend on chat history. | `SessionStart` hook + CLAUDE.md convention |
+| **Task state ledger** | Multi-step tasks keep their state in `<project>/.state/*.md` (or an OpenSpec change's `tasks.md`, with the module), which gets re-injected into context on startup, resume and **after compaction**, so progress doesn't depend on chat history. | `SessionStart` hook + CLAUDE.md convention |
 | **Human gates** | `git push`, `terraform apply`, `kubectl delete` and similar trigger a permission prompt (or are blocked) regardless of what the prompt says. | `PreToolUse` hook + editable rules file |
 | **Scars** | Corrections are written as 4-vector *scars* (Wound → Trap → Circuit breaker → Reflex) instead of "DON'T" rules, and `/scar` harvests them at the end of a task. | CLAUDE.md convention + `/scar` skill |
 
@@ -20,7 +20,24 @@ Requirements: `bash` (3.2+ is fine), `jq`, Claude Code.
 ./install.sh --uninstall # remove (keeps your local rules and any scars you wrote)
 ```
 
-Options: `--claude-dir DIR`, `--gitignore-file FILE`, `--no-gitignore`.
+Other options: `--claude-dir DIR`, `--claude-json FILE`, `--gitignore-file FILE`, `--no-gitignore`.
+
+### Optional modules
+
+| Module | Installs | Detected when |
+|---|---|---|
+| `fernrohr` | `hooks/guard-gates.d/fernrohr.conf`: asks before Fernrohr MCP tools that mutate a cluster (`delete_pods`, `scale`/`restart`/`rollback_workload`, `set_configmap_value`, `trigger_cronjob`…). Read-only tools aren't gated. | A `fernrohr` MCP server is registered in `~/.claude.json` (user or any project scope), or `/Applications/Fernrohr.app` exists |
+| `openspec` | `hooks/state-bootloader.d/openspec.sh`: the SessionStart hook also prints `tasks.md` of every active (non-archived) change. Adds an OpenSpec section to the CLAUDE.md block. | `openspec` is on `PATH`, or `openspec-*` skills are installed |
+
+A module defaults to **on** if it's already installed or detected, and **off** otherwise.
+- In a terminal, the installer asks about each module and shows that default; `--yes` accepts the defaults without asking.
+- `--with fernrohr,openspec` forces modules on, and `--without …` forces them off (and removes them if they were installed).
+- Reinstalling keeps whatever you chose last time.
+
+```bash
+./install.sh --yes                       # unattended, detection decides
+./install.sh --with openspec --without fernrohr
+```
 
 The installer is idempotent and only touches what it owns:
 - `settings.json`: adds two hook entries and leaves your existing hooks and settings alone.
@@ -32,9 +49,10 @@ Hooks load at session start, so **open a new session** after installing.
 
 ## Customising the gates
 
-Rules live in `~/.claude/hooks/`:
-- `guard-gates.conf` holds the kit defaults (overwritten on reinstall).
-- `guard-gates.local.conf` holds **your** rules. It's checked first and never overwritten.
+Rules live in `~/.claude/hooks/` and are checked in this order:
+1. `guard-gates.local.conf`: **your** rules, never overwritten.
+2. `guard-gates.d/*.conf`: module rules (e.g. `fernrohr.conf`), managed by the installer.
+3. `guard-gates.conf`: the kit defaults, overwritten on reinstall.
 
 ```text
 <allow|ask|deny> :: <bash|tool> :: <extended regex> :: <reason>
