@@ -1,0 +1,7 @@
+# installer backups, if a test or manual run points --claude-dir inside the repo
+*.bak-*
+
+# task ledgers from working on the kit itself
+.state/
+
+.DS_Store

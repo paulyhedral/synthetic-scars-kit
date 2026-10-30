@@ -1,0 +1,4 @@
+# Hooks run under bash; CRLF line endings break them silently.
+* text=auto eol=lf
+*.sh text eol=lf
+*.conf text eol=lf
