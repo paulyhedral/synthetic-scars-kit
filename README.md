@@ -68,7 +68,8 @@ ask   :: tool :: ^mcp__myserver__(delete|update)_.* :: Mutating MCP call.
 allow :: bash@~/code/infra :: {B}git[[:space:]]+push([[:space:]]|$) :: Pushing is routine in this repo.
 ```
 
-- First match wins. `{B}` is a command boundary, so `cd x && git push` matches and `grep 'git push'` doesn't.
+- Compound Bash commands are split on `;`, `&`, `|` and newlines, and each part is judged on its own: first match wins within a part, and the strictest part wins overall. An `allow` for `git push` can't wave through `git push && kubectl delete …`.
+- `{B}` is a command boundary, so `cd x && git push` matches and `grep 'git push'` doesn't.
 - `tool` rules match tool names, which is how you gate MCP servers. They never go through Bash.
 - **Project-scoped rules** (`bash@<dir>`, `tool@<dir>`) apply only when the session's project directory is `<dir>` or below it. The directory comes from `CLAUDE_PROJECT_DIR`, else the hook input's `cwd`. Globs and `~` work. Use them to remove friction where a gated command is routine, e.g. a repo where you always push directly.
   - Keep them in your local conf. A repo can't ship one, so cloning a repo can never loosen your gates.
