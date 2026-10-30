@@ -1,5 +1,8 @@
 # synthetic-scars-kit
 
+[![CI](https://github.com/paulyhedral/synthetic-scars-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/paulyhedral/synthetic-scars-kit/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A small Claude Code setup based on Randal L. Schwartz's [*Synthetic Scars*](https://dev.to/randalschwartz/series/44156) series, adapted from his Antigravity/Gemini workflow to Claude Code's native hooks, skills and memory.
 
 It installs three things:
@@ -12,9 +15,11 @@ It installs three things:
 
 ## Install
 
-Requirements: `bash` (3.2+ is fine), `jq`, Claude Code.
+Requirements: `bash` (3.2+ is fine), `jq`, Claude Code. Tested on macOS and Linux.
 
 ```bash
+git clone https://github.com/paulyhedral/synthetic-scars-kit.git
+cd synthetic-scars-kit
 ./install.sh --dry-run   # show what would change
 ./install.sh             # install into $CLAUDE_CONFIG_DIR or ~/.claude
 ./install.sh --uninstall # remove (keeps your local rules and any scars you wrote)
@@ -94,3 +99,28 @@ It asks for your OK before writing to `.claude/rules/scars-<area>.md` (path-scop
 test/run-tests.sh                       # sandboxed; never touches ~/.claude
 BASH_BIN=/bin/bash test/run-tests.sh    # check macOS bash 3.2 compatibility
 ```
+
+## Repository layout
+
+```text
+install.sh                      installer / uninstaller
+claude-md-snippet.md            core block written into CLAUDE.md
+hooks/
+  state-bootloader.sh           SessionStart hook (+ runs state-bootloader.d/*.sh)
+  guard-gates.sh                PreToolUse hook (reads *.conf rule files)
+  guard-gates.conf              default gate rules
+  guard-gates.local.conf.example  seed for your own rules
+skills/scar/SKILL.md            the /scar skill
+modules/<name>/                 optional modules (files installed into *.d/)
+test/run-tests.sh               sandboxed test suite
+```
+
+Adding a module means adding a directory under `modules/`, plus its entries in the `module_*` functions in `install.sh` and tests in `test/run-tests.sh`.
+
+## Credits
+
+The ideas come from Randal L. Schwartz: the [*Synthetic Scars* series](https://dev.to/randalschwartz/series/44156) on DEV and his [public workflow Gist](https://gist.github.com/RandalSchwartz/598a1f2b5760a23c1d70b57e9e85393f). His version targets Google Antigravity and Dart/Flutter repos. This kit is an independent reimplementation for Claude Code and doesn't reuse his files. If you want the full ticket-lifecycle DAG, read his originals.
+
+## License
+
+[MIT](LICENSE)
