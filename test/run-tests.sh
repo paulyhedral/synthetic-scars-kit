@@ -96,7 +96,8 @@ printf '%s\n' \
   "allow :: bash@$SANDBOX/infra :: {B}git[[:space:]]+push([[:space:]]|\$) :: pushes are routine here" \
   'allow :: bash@~/agents :: {B}kubectl[[:space:]] :: kubectl is routine here' \
   'allow :: tool@~/agents :: ^mcp__x__delete_.* :: fine here' \
-  'ask :: tool :: ^mcp__x__delete_.* :: mutating MCP' >"$CD/hooks/guard-gates.local.conf"
+  'ask :: tool :: ^mcp__x__delete_.* :: mutating MCP' \
+  'deny :: bash :: {B}rm[[:space:]]+-rf[[:space:]]+/([[:space:]]|$) :: never' >"$CD/hooks/guard-gates.local.conf"
 check "scoped allow in project root" allow "$(gate_at "$SANDBOX/infra" Bash 'git push origin x')"
 check "scoped allow in project subdir" allow "$(gate_at "$SANDBOX/infra/modules/a" Bash 'git push')"
 check "scoped allow not for sibling prefix" ask "$(gate_at "$SANDBOX/infra-other" Bash 'git push')"
@@ -105,6 +106,15 @@ check "scoped allow with ~ expansion" allow "$(gate_at "$SANDBOX/home/agents" Ba
 check "scoped rule leaves other gates alone" ask "$(gate_at "$SANDBOX/infra" Bash 'kubectl delete pod x')"
 check "scoped tool rule" allow "$(gate_at "$SANDBOX/home/agents" mcp__x__delete_thing '')"
 check "unscoped tool rule elsewhere" ask "$(gate_at "$SANDBOX/infra" mcp__x__delete_thing '')"
+# compound commands: an allow for one part must not wave through another part
+check "allow can't bypass gate via &&" ask "$(gate_at "$SANDBOX/infra" Bash 'git push && kubectl delete pod x')"
+check "allow can't bypass gate via ;" ask "$(gate_at "$SANDBOX/infra" Bash 'git push; terraform apply')"
+check "allow can't bypass gate via |" ask "$(gate_at "$SANDBOX/infra" Bash 'git push | kubectl apply -f -')"
+check "allow can't bypass gate via newline" ask "$(gate_at "$SANDBOX/infra" Bash "$(printf 'git push\nkubectl delete pod x')")"
+check "strictest part wins (deny over ask)" deny "$(gate_at "$SANDBOX/elsewhere" Bash 'kubectl delete pod x; rm -rf /')"
+check "strictest part wins (deny over allow)" deny "$(gate_at "$SANDBOX/infra" Bash 'git push && rm -rf / ')"
+check "all-allowed compound stays allowed" allow "$(gate_at "$SANDBOX/infra" Bash 'git add -A && git commit -m x && git push')"
+check "2>&1 split doesn't create false gates" allow "$(gate_at "$SANDBOX/infra" Bash 'git push 2>&1 | tail -2')"
 check "no project dir: scoped rule skipped" ask "$(gate Bash 'git push')"
 out=$(jq -n '{cwd:"/nowhere",tool_name:"Bash",tool_input:{command:"git push"}}' | CLAUDE_PROJECT_DIR="$SANDBOX/infra" "$BASH_BIN" "$G" 2>/dev/null)
 check "CLAUDE_PROJECT_DIR wins over cwd (allow = no output)" "" "$out"

@@ -10,6 +10,12 @@ All notable changes to this project are documented here. The format follows
 - `scar-mine.sh` and `/scar mine`: mine a repo's git history for "rapid regret" commit pairs (same author, fix shortly after, same files/lines) and draft scars from them.
 - Project-scoped gate rules (`bash@<dir>`, `tool@<dir>`) to relax gates where a command is routine; only honoured from your own local conf.
 
+### Fixed
+- Guard: compound commands could bypass a gate when another part matched an `allow` rule (`git push && kubectl delete …`). Each simple command is now judged separately, and the strictest result wins.
+
+### Changed
+- Guard: rules match with bash's built-in regex instead of a `grep` per rule (about 3× faster per tool call).
+
 ## [0.1.0] - 2026-10-30
 
 ### Added

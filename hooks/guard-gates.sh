@@ -6,7 +6,7 @@
 #   guard-gates.local.conf  (yours, never overwritten by install.sh)
 #   guard-gates.d/*.conf    (optional modules, e.g. fernrohr.conf)
 #   guard-gates.conf        (kit defaults)
-# First matching rule wins. Line format:
+# First matching rule wins (per simple command; see below). Line format:
 #   <allow|ask|deny> :: <bash|tool>[@<project-dir-glob>] :: <extended regex> :: <reason>
 # In bash-scope patterns, {B} expands to a command-boundary class so
 # "cd x && git push" matches but "grep 'git push'" does not.
@@ -44,15 +44,9 @@ conf_dir=$(cd "$(dirname "$0")" && pwd)
 boundary='(^|[;&|[:space:]`(])'
 sep=' :: '
 
-decide() { # $1=allow|ask|deny  $2=reason
-  [ "$1" = allow ] && exit 0
-  jq -n --arg d "$1" --arg r "$2" \
-    '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: $d, permissionDecisionReason: $r}}'
-  exit 0
-}
-
 shopt -s nullglob
 confs=("$conf_dir/guard-gates.local.conf" "$conf_dir"/guard-gates.d/*.conf "$conf_dir/guard-gates.conf")
+rule_dec=(); rule_pat=(); rule_why=()   # rules applying to this tool + project, in order
 for conf in "${confs[@]}"; do
   [ -f "$conf" ] || continue
   while IFS= read -r line || [ -n "$line" ]; do
@@ -69,11 +63,38 @@ for conf in "${confs[@]}"; do
       "$scope@"*) in_project "${rule_scope#*@}" || continue ;;
       *) continue ;;
     esac
-    pattern=${pattern//\{B\}/$boundary}
-    if grep -Eq -- "$pattern" <<<"$subject"; then
-      decide "$decision" "$reason"
-    fi
+    rule_dec+=("$decision"); rule_pat+=("${pattern//\{B\}/$boundary}"); rule_why+=("$reason")
   done <"$conf"
 done
+[ ${#rule_dec[@]} -eq 0 ] && exit 0
 
+# Judge each simple command of a compound Bash command on its own, so an
+# allow for one part can't wave through another ("git push && kubectl delete").
+# First matching rule wins within a part; the strictest part wins overall.
+segments=()
+if [ "$scope" = bash ]; then
+  # shellcheck disable=SC2020  # each of ; & | becomes a newline, char for char
+  while IFS= read -r seg; do segments+=("$seg"); done < <(printf '%s\n' "$subject" | tr ';&|' '\n\n\n')
+else
+  segments=("$subject")
+fi
+
+worst=0; worst_dec=""; worst_why=""
+for seg in "${segments[@]}"; do
+  [ -n "${seg//[[:space:]]/}" ] || continue
+  i=0
+  while [ "$i" -lt ${#rule_dec[@]} ]; do
+    if [[ $seg =~ ${rule_pat[$i]} ]]; then
+      case "${rule_dec[$i]}" in deny) rank=3 ;; ask) rank=2 ;; *) rank=1 ;; esac
+      if [ "$rank" -gt "$worst" ]; then worst=$rank; worst_dec=${rule_dec[$i]}; worst_why=${rule_why[$i]}; fi
+      break
+    fi
+    i=$((i + 1))
+  done
+done
+
+if [ "$worst" -ge 2 ]; then
+  jq -n --arg d "$worst_dec" --arg r "$worst_why" \
+    '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: $d, permissionDecisionReason: $r}}'
+fi
 exit 0
